@@ -49,10 +49,9 @@ def compute_loss_for_images(
     print(f"Loading model: {model_name}, patch_size: {patch_size}, crop_size: {crop_size}")
 
     # 2. 初始化模型
-    # 先在 CPU 上初始化以节省显存，避免 deepcopy 的峰值
-    print("Initializing models on CPU...")
+    print(f"Initializing models on {device}...")
     encoder, predictor = init_model(
-        device='cpu',
+        device=device,
         patch_size=patch_size,
         crop_size=crop_size,
         pred_depth=pred_depth,
@@ -60,7 +59,7 @@ def compute_loss_for_images(
         model_name=model_name
     )
     target_encoder, _ = init_model(
-        device='cpu',
+        device=device,
         patch_size=patch_size,
         crop_size=crop_size,
         pred_depth=pred_depth,
@@ -114,6 +113,15 @@ def compute_loss_for_images(
     encoder.to(device)
     predictor.to(device)
     target_encoder.to(device)
+
+    # Use bfloat16 to save memory
+    if torch.cuda.is_available() and torch.cuda.is_bf16_supported():
+        print("Casting models to bfloat16...")
+        encoder.bfloat16()
+        predictor.bfloat16()
+        target_encoder.bfloat16()
+    else:
+        print("bfloat16 not supported or not using CUDA, using float32 (might OOM on large models)")
 
     encoder.eval()
     predictor.eval()
@@ -173,10 +181,12 @@ def compute_loss_for_images(
 
                 # 构造 Batch (重复 N 次以求平均)
                 batch_imgs = img_tensor.repeat(n_repeats, 1, 1, 1)
+                if torch.cuda.is_available() and torch.cuda.is_bf16_supported():
+                    batch_imgs = batch_imgs.bfloat16()
 
                 # 生成 Mask
                 dummy_input = [0] * n_repeats
-                masks_enc, masks_pred = mask_collator(dummy_input)
+                _, masks_enc, masks_pred = mask_collator(dummy_input)
                 
                 masks_enc = [m.to(device) for m in masks_enc]
                 masks_pred = [m.to(device) for m in masks_pred]
