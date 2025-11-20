@@ -1,3 +1,5 @@
+# python src/compute_loss.py --input /home/comp/f2256768/CPDD/data/images/real --limit 100
+
 import torch
 import yaml
 import os
@@ -25,7 +27,8 @@ def compute_loss_for_images(
     config_path,
     output_path='results.csv',
     device='cuda' if torch.cuda.is_available() else 'cpu',
-    n_repeats=16
+    n_repeats=16,
+    limit=None
 ):
     print(f"Using device: {device}")
     
@@ -119,11 +122,18 @@ def compute_loss_for_images(
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
+    total_loss_sum = 0.0
+    count = 0
+
     with open(output_path, 'w', newline='') as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(['Image Path', 'Average Loss'])
 
-        for img_path in image_paths:
+        for i, img_path in enumerate(image_paths):
+            if limit is not None and i >= limit:
+                print(f"Reached limit of {limit} images. Stopping.")
+                break
+
             if not os.path.exists(img_path):
                 print(f"Error: Image not found at {img_path}")
                 continue
@@ -155,14 +165,26 @@ def compute_loss_for_images(
                     loss = F.smooth_l1_loss(z, h)
                 
                 loss_val = loss.item()
-                print(f"{os.path.basename(img_path):<40} | {loss_val:.6f}")
+                print(f"[{i+1}/{len(image_paths)}] {os.path.basename(img_path):<40} | {loss_val:.6f}")
                 results[img_path] = loss_val
                 
+                total_loss_sum += loss_val
+                count += 1
+
                 writer.writerow([img_path, loss_val])
                 csvfile.flush()
 
             except Exception as e:
                 print(f"Error processing {img_path}: {e}")
+        
+        if count > 0:
+            global_avg = total_loss_sum / count
+            print("-" * 60)
+            print(f"Global Average Loss: {global_avg:.6f}")
+            print("-" * 60)
+            writer.writerow(['TOTAL_AVERAGE', global_avg])
+        else:
+            print("No images processed.")
 
     print(f"\nResults saved to {output_path}")
     return results
@@ -184,15 +206,16 @@ if __name__ == "__main__":
     
     parser.add_argument('--output', type=str, default=default_output, help='Path to output CSV file')
     parser.add_argument('--repeats', type=int, default=16, help='Number of repeats for averaging loss')
+    parser.add_argument('--limit', type=int, default=None, help='Limit number of images to process')
     
     args = parser.parse_args()
 
     image_paths = []
     if os.path.isdir(args.input):
-        extensions = ['*.jpg', '*.jpeg', '*.png', '*.bmp']
-        for ext in extensions:
-            image_paths.extend(glob.glob(os.path.join(args.input, ext)))
-            image_paths.extend(glob.glob(os.path.join(args.input, ext.upper())))
+        for root, dirs, files in os.walk(args.input):
+            for file in files:
+                if file.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp')):
+                    image_paths.append(os.path.join(root, file))
         image_paths.sort()
     elif os.path.isfile(args.input):
         image_paths = [args.input]
@@ -209,5 +232,6 @@ if __name__ == "__main__":
         args.checkpoint,
         args.config,
         output_path=args.output,
-        n_repeats=args.repeats
+        n_repeats=args.repeats,
+        limit=args.limit
     )
