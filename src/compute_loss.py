@@ -49,15 +49,24 @@ def compute_loss_for_images(
     print(f"Loading model: {model_name}, patch_size: {patch_size}, crop_size: {crop_size}")
 
     # 2. 初始化模型
+    # 先在 CPU 上初始化以节省显存，避免 deepcopy 的峰值
+    print("Initializing models on CPU...")
     encoder, predictor = init_model(
-        device=device,
+        device='cpu',
         patch_size=patch_size,
         crop_size=crop_size,
         pred_depth=pred_depth,
         pred_emb_dim=pred_emb_dim,
         model_name=model_name
     )
-    target_encoder = copy.deepcopy(encoder)
+    target_encoder, _ = init_model(
+        device='cpu',
+        patch_size=patch_size,
+        crop_size=crop_size,
+        pred_depth=pred_depth,
+        pred_emb_dim=pred_emb_dim,
+        model_name=model_name
+    )
 
     # 3. 加载权重
     if checkpoint_path and os.path.exists(checkpoint_path):
@@ -65,13 +74,33 @@ def compute_loss_for_images(
         try:
             checkpoint = torch.load(checkpoint_path, map_location='cpu')
             
-            msg = encoder.load_state_dict(checkpoint['encoder'])
+            # msg = encoder.load_state_dict(checkpoint['encoder'])
+            # 处理 encoder 权重键名不匹配问题
+            # 检查 checkpoint 中的 key 是否包含 'module.' 前缀 (DDP 训练产生的)
+            encoder_state_dict = checkpoint['encoder']
+            if any(k.startswith('module.') for k in encoder_state_dict.keys()):
+                print("Detected 'module.' prefix in encoder checkpoint, removing it...")
+                encoder_state_dict = {k.replace('module.', ''): v for k, v in encoder_state_dict.items()}
+            
+            msg = encoder.load_state_dict(encoder_state_dict)
             print(f"Loaded encoder with msg: {msg}")
             
-            msg = predictor.load_state_dict(checkpoint['predictor'])
+            # msg = predictor.load_state_dict(checkpoint['predictor'])
+            predictor_state_dict = checkpoint['predictor']
+            if any(k.startswith('module.') for k in predictor_state_dict.keys()):
+                print("Detected 'module.' prefix in predictor checkpoint, removing it...")
+                predictor_state_dict = {k.replace('module.', ''): v for k, v in predictor_state_dict.items()}
+            
+            msg = predictor.load_state_dict(predictor_state_dict)
             print(f"Loaded predictor with msg: {msg}")
             
-            msg = target_encoder.load_state_dict(checkpoint['target_encoder'])
+            # msg = target_encoder.load_state_dict(checkpoint['target_encoder'])
+            target_encoder_state_dict = checkpoint['target_encoder']
+            if any(k.startswith('module.') for k in target_encoder_state_dict.keys()):
+                print("Detected 'module.' prefix in target_encoder checkpoint, removing it...")
+                target_encoder_state_dict = {k.replace('module.', ''): v for k, v in target_encoder_state_dict.items()}
+            
+            msg = target_encoder.load_state_dict(target_encoder_state_dict)
             print(f"Loaded target_encoder with msg: {msg}")
             
             del checkpoint
